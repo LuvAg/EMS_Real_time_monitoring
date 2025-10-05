@@ -912,6 +912,21 @@ elif page == "System Settings":
                 df_row = _pd.DataFrame([row])
                 write_header = not os.path.exists(ev_path)
                 df_row.to_csv(ev_path, mode='a', header=write_header, index=False)
+                # Audit the manual append
+                try:
+                    audit_path = os.path.join(data_folder, "manual_appends_audit.csv")
+                    import pandas as _pd
+                    audit_row = {
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "user": "dashboard",
+                        "target_file": "hourlyEVusage_cleaned.csv",
+                        "appended_row": str(row),
+                        "result": "success"
+                    }
+                    _pd.DataFrame([audit_row]).to_csv(audit_path, mode='a', header=not os.path.exists(audit_path), index=False)
+                except Exception:
+                    pass
+
                 st.success(f"Appended EV usage row to {ev_path}")
                 st.json(row)
             except Exception as e:
@@ -945,6 +960,21 @@ elif page == "System Settings":
                 df_row = _pd.DataFrame([row])
                 write_header = not os.path.exists(sat_path)
                 df_row.to_csv(sat_path, mode='a', header=write_header, index=False)
+                # Audit the manual append
+                try:
+                    audit_path = os.path.join(data_folder, "manual_appends_audit.csv")
+                    import pandas as _pd
+                    audit_row = {
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "user": "dashboard",
+                        "target_file": "satelite_hourly_data.csv",
+                        "appended_row": str(row),
+                        "result": "success"
+                    }
+                    _pd.DataFrame([audit_row]).to_csv(audit_path, mode='a', header=not os.path.exists(audit_path), index=False)
+                except Exception:
+                    pass
+
                 st.success(f"Appended satellite data row to {sat_path}")
                 st.json(row)
             except Exception as e:

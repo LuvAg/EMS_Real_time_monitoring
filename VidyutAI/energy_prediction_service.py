@@ -66,6 +66,8 @@ class EnergyPredictionService:
         self._load_load_prediction_model()
         self._load_power_prediction_model()
         self._load_historical_data()
+        # Load lightweight retrained sklearn models if available
+        self._load_retrained_models()
     
     def _load_load_prediction_model(self):
         """Load the CatBoost load prediction model"""
@@ -146,6 +148,26 @@ class EnergyPredictionService:
                 
         except Exception as e:
             print(f"Error loading historical data: {e}")
+
+    def _load_retrained_models(self):
+        """Attempt to load lightweight retrained sklearn models placed in model/ by scripts/retrain_models.py"""
+        try:
+            ev_model_file = os.path.join(self.model_path, 'ev_model.pkl')
+            sat_model_file = os.path.join(self.model_path, 'sat_power_model.pkl')
+            if os.path.exists(ev_model_file):
+                self.ev_model = joblib.load(ev_model_file)
+                print('Loaded retrained EV sklearn model')
+            else:
+                self.ev_model = None
+            if os.path.exists(sat_model_file):
+                self.sat_model = joblib.load(sat_model_file)
+                print('Loaded retrained satellite sklearn model')
+            else:
+                self.sat_model = None
+        except Exception as e:
+            print(f"Error loading retrained sklearn models: {e}")
+            self.ev_model = None
+            self.sat_model = None
     
     def _prepare_load_data(self):
         """Prepare load data with features as in loadPrediction.ipynb"""
@@ -203,6 +225,20 @@ class EnergyPredictionService:
         Predict load for the next 24 hours using CatBoost model
         Returns array of 24 hourly predictions in kWh
         """
+        # If a retrained sklearn EV model is available, produce a simple hourly forecast
+        if getattr(self, 'ev_model', None) is not None:
+            try:
+                base_dt = datetime.now()
+                hours = [(base_dt + timedelta(hours=h)).hour for h in range(24)]
+                days = [(base_dt + timedelta(hours=h)).day for h in range(24)]
+                months = [(base_dt + timedelta(hours=h)).month for h in range(24)]
+                X = np.column_stack([hours, days, months])
+                preds = self.ev_model.predict(X)
+                preds = np.maximum(preds, 0)
+                return preds
+            except Exception as e:
+                print(f"Error using retrained EV model: {e}")
+
         if self.load_prediction_model is None or self.load_scalers is None or self.load_data is None:
             print("Load prediction not available, using fallback")
             return self._fallback_load_prediction()
@@ -250,6 +286,30 @@ class EnergyPredictionService:
         Predict solar power generation for the next 24 hours using PyTorch LSTM model
         Returns array of 24 hourly predictions in kW (scaled up from single panel)
         """
+        # If retrained satellite sklearn model available, use it to produce a quick 24h estimate
+        if getattr(self, 'sat_model', None) is not None and self.power_data is not None:
+            try:
+                # Use last row features as baseline and repeat for 24 hours with small variations
+                last = self.power_data.iloc[-1]
+                feats = [last.get('solar radiation', 0.0), last.get('module_temp', 0.0), last.get('wind direction', 0.0), last.get('wind speed', 0.0)]
+                # Predict a single value and create a daily profile around it
+                base_pred = float(self.sat_model.predict([feats])[0])
+                # Create simple bell-shaped daily pattern scaled by base_pred
+                pattern = []
+                current_hour = datetime.now().hour
+                for i in range(24):
+                    hour = (current_hour + i) % 24
+                    if 6 <= hour <= 18:
+                        # day hours: scale by a gaussian centered at noon
+                        solar_angle = (hour - 12) / 6
+                        factor = np.exp(-2 * solar_angle**2)
+                        pattern.append(max(0.0, base_pred * factor))
+                    else:
+                        pattern.append(0.0)
+                return np.array(pattern)
+            except Exception as e:
+                print(f"Error using retrained satellite model: {e}")
+
         if (self.power_prediction_model is None or 
             self.power_scalers is None or 
             self.power_data is None):
